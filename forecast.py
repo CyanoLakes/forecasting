@@ -24,6 +24,31 @@ def exponential_smoothing(c, p):
     return (a * c) + (1 - a) * p
 
 
+def trend_adjusted_exponential_smoothing(c, p, t):
+    """
+    Exponential smoothing function
+    :param c - current actual value for t
+    :param p - predicted forecast value for t
+    :param t - previous trend
+    :returns f - forecast value
+    """
+    A = 0.5  # alpha ranges from 0 to 1
+    B = 0.5  # beta  ranges from 0 to 1 (trend adjustment factor)
+
+    # Exp smoothing
+    f = (A * c) + (1 - A) * p
+
+    # Trend (forecast trend)
+    ft = B * (f - p) + (1 - B) * t
+
+    # Trend adjusted forecast
+    taf = f + ft
+    if taf < 0:
+        taf = 0
+
+    return taf, ft
+
+
 def exponential_smoothing_err(c, p):
     """
     Exponential smoothing function
@@ -133,6 +158,18 @@ def parse_risk_level(x):
     return 0
 
 
+def parse_trophic_state(x):
+     if np.isnan(x):
+        return np.nan
+     if x > 50:
+         return 3  #Hyper
+     if x > 20:
+         return 2  #Eu
+     if x > 10:
+         return 1 #Meso
+     return 0 # Oligo
+
+
 def forecast(variable='chla_cyano',
              agg='week',
              model='naive',
@@ -194,6 +231,7 @@ def forecast(variable='chla_cyano',
         y_f2 = list()  # 2 wk forecast
         y_f4 = list()  # 4 wk forecast
         dates = list()
+        taes = list()  # for trend adjusted exponential smoothing
 
         # Loop through last 1 year of data calculating weekly forecast values
         indices = ma[ma.index > (ma.index[-1] - datetime.timedelta(365))].index
@@ -206,7 +244,7 @@ def forecast(variable='chla_cyano',
             try:
                 y0 = ma.loc[dt, variable]  # last week
                 y1 = ma.loc[dt1, variable]  # this week
-                y2 = ma.loc[dt2, variable]  # next week (forecast)
+                y2 = ma.loc[dt2, variable]  # next week (forecast week)
             except KeyError:
                 continue
 
@@ -217,7 +255,7 @@ def forecast(variable='chla_cyano',
 
             # Get trend
             # t = trend(y0, y1)
-            t = change.loc[dt1].values[0]  # this weeks trend (from last weeks)
+            #t = change.loc[dt1].values[0]  # this weeks trend (from last weeks)
             t = y1 - y0  # change since last week
 
 
@@ -237,18 +275,29 @@ def forecast(variable='chla_cyano',
             if model == 'exponential smoothing':
                 # Set initial value
                 if i == 0:
-                    f1 = y1
+                    f0 = y1
                 else:
-                    f1 = y_f1[i-1]
-                f1 = exponential_smoothing(y1, f1)
+                    f0 = y_f1[i-1]
+                f1 = exponential_smoothing(y1, f0)
 
             if model == 'exponential smoothing error':
                 # Set initial value
                 if i == 0:
-                    f1 = y1
+                    f0 = y1
                 else:
-                    f1 = y_f1[i-1]
-                f1 = exponential_smoothing_err(y1, f1)
+                    f0 = y_f1[i-1]
+                f1 = exponential_smoothing_err(y1, f0)
+
+            if model == 'trend adjusted exponential smoothing':
+                # Set initial value
+                if i == 0:
+                    f0 = y1
+                    t0 = 0
+                else:
+                    f0 = y_f1[i - 1]
+                    t0 = taes[i - 1]
+                f1, t1 = trend_adjusted_exponential_smoothing(y1, f0, t0)
+                taes.append(t1)
 
             if model == 'ets':
                 if i == 0:
@@ -292,13 +341,19 @@ def forecast(variable='chla_cyano',
         #stats_results.loc['mae_1wk', name] = np.sum(result['residual_1wk']) / n
         #stats_results.loc['mape_1wk', name] = 100 * np.sum(result['residual_perc_1wk']) / n
 
-        # Convert values to risk levels (how often does the risk level agree?)
-        result['Obs_crl'] = result['Obs'].apply(parse_risk_level)
-        result['Pred_crl'] = result['Pred'].apply(parse_risk_level)
+        # CRL agreement
+        if variable == 'chla_cyano':
+            result['Obs_crl'] = result['Obs'].apply(parse_risk_level)
+            result['Pred_crl'] = result['Pred'].apply(parse_risk_level)
+            result['crl_agree'] = result['Obs_crl'] == result['Pred_crl']
+            stats_results.loc['crl', name] = 100 * round(np.sum(result['crl_agree']) / n, 3)
 
-        # Calculate CRL agreement in percentage 
-        result['crl_agree'] = result['Obs_crl'] == result['Pred_crl']
-        stats_results.loc['crl', name] = 100 * round(np.sum(result['crl_agree']) / n, 3)
+        # Trophic state agreement
+        if variable == 'chla_med':
+            result['Obs_ts'] = result['Obs'].apply(parse_trophic_state)
+            result['Pred_ts'] = result['Pred'].apply(parse_trophic_state)
+            result['ts_agree'] = result['Obs_ts'] == result['Pred_ts']
+            stats_results.loc['ts', name] = 100 * round(np.sum(result['ts_agree']) / n, 3)
 
         if horizon == 'all':
             # n = n - 1 week
@@ -369,17 +424,19 @@ if __name__ == "__main__":
     n, names = forecast(variable='chla_cyano', agg='W', model='naive', horizon=1, plot=False)
     ma, names = forecast(variable='chla_cyano', agg='W', model='moving average', horizon=1, plot=False)
     sn, names = forecast(variable='chla_cyano', agg='W', model='seasonal naive', horizon=1, plot=False)
-    es, names = forecast(variable='chla_cyano', agg='W', model='exponential smoothing', horizon=1, plot=False)
-    ets, names = forecast(variable='chla_cyano', agg='W', model='ets', horizon=1, plot=True)
+    es, names = forecast(variable='chla_cyano', agg='W', model='exponential smoothing', horizon=1, plot=True)
+    taes, names = forecast(variable='chla_cyano', agg='W', model='trend adjusted exponential smoothing', horizon=1, plot=True)
+    ets, names = forecast(variable='chla_cyano', agg='W', model='ets', horizon=1, plot=False)
     #forecast(variable='chla_med', agg='W', model='naive', horizon=1, plot=False)
 
     # Can combine results here
-    index = ['naive', 'moving average', 'seasonal naive', 'exponential smoothing', 'ets']
+    index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
     df = pd.DataFrame(columns=names, index=index)
-    df.loc['naive', :] = n.loc['rmse', :]
-    df.loc['moving average', :] = ma.loc['rmse', :]
-    df.loc['seasonal naive', :] = sn.loc['rmse', :]
-    df.loc['exponential smoothing', :] = es.loc['rmse', :]
+    df.loc['na', :] = n.loc['rmse', :]
+    df.loc['ma', :] = ma.loc['rmse', :]
+    df.loc['sn', :] = sn.loc['rmse', :]
+    df.loc['es', :] = es.loc['rmse', :]
+    df.loc['taes', :] = taes.loc['rmse', :]
     df.loc['ets', :] = ets.loc['rmse', :]
 
     print(df)
