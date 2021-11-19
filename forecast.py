@@ -91,19 +91,30 @@ def ets(c, p, t, s):
     0.5 weighting for seasonal value
     0.5 weighting for current value times trend
     """
-    wc = 0.5  # current inoculation
-    ws = 0.3  # season
-    wt = 0.1  # trend
-    we = 0.1  # error
-
     w = 0.6
-    # return (w * c) + (1 - w) * (s + t)
+
+
+    # 1. Forecast is weighting of seasonal and current inoculation
+    f = (w * c) + (1 - w) * s
+
+    # 2. Forecast is weighting of seasonal, current inoculation plus trend adjustment
+    # f = (w * (c + t)) + (1 - w) * s  # not very good
+    # f = (w * c) + ((1 - w) * s) + t  # trend too strong
+    # f = (w * c) + (1 - w) * (s + t)  # not great
+
+    # 3. Forecast is seasonal, current plus error of last forecast
+    e = c - p  # difference of previous forecast and actual value
+    #f = (w * (c + e)) + ((1 - w) * s)  # poor
+    #f = (w * c) + ((1 - w) * s) + e  # too jumpy
+
+    # 4.
+    # wc = 0.5  # current inoculation
+    # ws = 0.3  # season
+    # wt = 0.1  # trend
+    # we = 0.1  # error
+
     # return (wc * c) + (ws * s) + (wt * t)
-    # return (w * (c + t)) + (1 - w) * (s)
 
-    e = c - p
-
-    f = (w * c) + ((1 - w) * s)
     if f < 1:
         f = 1
 
@@ -127,6 +138,37 @@ def ets(c, p, t, s):
 
     # return (w * c) + (1 - w) * (s)
     # return s
+
+
+def logical_decomposition(y1, y0, cp1, sa, t, f0):
+    """Custom model
+    y1 - current value
+    y0 - last week value
+    cp1 - seasonal cyanobacteria probability of forecast week
+    t - trend
+    f0 - forecast for this week (the last forecast)
+    """
+
+    # 1. Moving average
+    ma = (y1 + y0) / 2
+
+    # 2. Error of last forecast
+    e = y1 - f0
+
+    # 3. Weight MA by cyano probability
+    #f = (ma * cp1)  # + e
+    f = ma + e
+
+    # weighted current and seasonal average with error
+    a = 0.7
+    f = (a * y1) + (1 - a) * sa
+
+
+
+    if f < 1:
+        return 1
+
+    return f
 
 
 def ets2wk(c, t, s):
@@ -171,36 +213,43 @@ def parse_trophic_state(x):
 
 
 def forecast(variable='chla_cyano',
-             agg='week',
              model='naive',
              horizon=1,
              plot=False):
     """
     Forecasting function.
-    :param model: model
+    :param model: model - name of the model
     :param plot: create plots (True or False)
     :param horizon: forecast horizon (1, 2, 4 or all)
     :param variable: chla_med or chla_cyano
-    :param agg: weekly or monthly aggregation of data
     :return: returns results dataframe
     """
+    print('Variable: %s Model: %s Horizon: %s' % (variable, model, horizon))
+
     # 1. Read in file
-    file_path = "/home/mark/Documents/Forecasting/CyanoLakes_all_stats.csv"
+    file_path = "/home/mark/PycharmProjects/forecasting/CyanoLakes_chl_stats.csv"
     csv = pd.read_csv(file_path)
 
     df = csv[[variable, 'name']]  # subset
     df.index = pd.to_datetime(csv['date'])  # make date index
     df = df.dropna(axis=0, how='any')
-    df.replace(0, 1)  # replace zeros if exist
+    # df.replace(0, 0.00001)  # replace zeros if exist
 
     # loop through unique names doing calculations
     names = df['name'].unique()  # get unique names
 
     # Pre-assign results array
-    stats_results = pd.DataFrame(columns=names)
+    results = pd.DataFrame(columns=names)
+    stats = pd.DataFrame(columns=names)
 
     for name in names:
         data = df[df['name'] == name]
+
+        # Get some generic stats
+        stats.loc[variable, name] = data[variable].mean()
+        stats.loc['count', name] = len(data)
+        stats.loc['start', name] = data.index.min()
+        stats.loc['end', name] = data.index.max()
 
         # Resample to weekly time-scale using mean and backfilling - moving average
         ma = data.resample('W').mean().bfill()
@@ -209,12 +258,39 @@ def forecast(variable='chla_cyano',
         cma = ma.rolling(window=2).mean()
 
         # Calculate trend equal to periodicity (12 months) moving average
-        #trend = ma.rolling(window=52).mean()  # 52 weeks in a year
+        trend = ma.rolling(window=52).mean()  # 52 weeks in a year
 
         # Subtract the trend (de-trend the time-series)
+        detrended = ma - trend
+
+        # Seasonal values from detrended data (weekly)
+        seasonal = detrended.groupby(detrended.index.isocalendar().week).mean()
+
+        # make seasonal time series
+        seasonal_series = ma.apply(lambda x: seasonal.loc[x.index.isocalendar().week, variable])
+        seasonal_series.index = ma.index
+
+        # Remainder
+        remainder = ma - trend - seasonal_series
+
+        reconstruct = remainder + trend + seasonal_series
+        columns = ['reconstructed', 'trend', 'seasonality', 'remainder']
+        decomposed = pd.DataFrame(columns=columns, index=ma.index)
+        decomposed.loc[:, 'original'] = ma.loc[:, 'chla_cyano']
+        decomposed.loc[:, 'reconstructed'] = reconstruct.loc[:, 'chla_cyano']
+        decomposed.loc[:, 'trend'] = trend.loc[:, 'chla_cyano']
+        decomposed.loc[:, 'seasonality'] = seasonal_series.loc[:, 'chla_cyano']
+        decomposed.loc[:, 'remainder'] = remainder.loc[:, 'chla_cyano']
+
 
         # Calculate seasonal weekly averages from cma
         sa = cma.groupby(cma.index.isocalendar().week).mean()
+
+        if variable == 'chla_cyano':
+            cycma = cma.where(cma < 1, 1)  # where > 0 make 1 else 0
+            cyct = cycma.groupby(cycma.index.isocalendar().week).count()  # weekly count
+            cysum = cycma.groupby(cycma.index.isocalendar().week).sum()  # weekly sum
+            cyprob = cysum / cyct
 
         # Subtract seasonal signal from resampled time-series (to get anomalies)
         subtract_array = ma.apply(lambda x: sa.loc[x.index.isocalendar().week, variable])
@@ -253,11 +329,14 @@ def forecast(variable='chla_cyano',
             s2 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=1), variable)  # 2 wk forecast
             s4 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=3), variable)  # 4 wk forecast
 
+            # Get seasonal probability
+            if variable == 'chla_cyano':
+                cp1 = get_seasonal_average(cyprob, dt2, variable)
+
             # Get trend
             # t = trend(y0, y1)
             #t = change.loc[dt1].values[0]  # this weeks trend (from last weeks)
             t = y1 - y0  # change since last week
-
 
             # Compute forecasts
             if model == 'naive':
@@ -301,10 +380,18 @@ def forecast(variable='chla_cyano',
 
             if model == 'ets':
                 if i == 0:
-                    p1 = y1  # user current value
+                    p1 = y1  # use current value
                 else:
                     p1 = y_f1[i-1]
                 f1 = ets(y1, p1, t, s1)
+
+            if model == 'logical decomposition':
+                # Set initial value
+                if i == 0:
+                    f0 = y1
+                else:
+                    f0 = y_f1[i-1]
+                f1 = logical_decomposition(y0, y1, cp1, s1, t, f0)
 
             dates.append(dt2)  # 1 wk forecast dates
             y.append(y2)  # Chl-a observed (actual value at forecast date)
@@ -335,55 +422,57 @@ def forecast(variable='chla_cyano',
         n = len(dates)
         result['residual'] = abs(result['Obs'] - result['Pred'])
         result['residual_sq'] = np.square(result['Obs'] - result['Pred'])
-        stats_results.loc['rmse', name] = np.sqrt(np.sum(result['residual_sq']) / n)
-        # result['residual_perc_1wk'] = abs((result['Obs'] - result['1wk']) / result['Obs'])
-        #stats_results.loc['rsq_1wk', name] = np.square(result.corr().loc['Obs', '1wk'])
-        #stats_results.loc['mae_1wk', name] = np.sum(result['residual_1wk']) / n
-        #stats_results.loc['mape_1wk', name] = 100 * np.sum(result['residual_perc_1wk']) / n
+        # result['residual_lsq'] = np.square(np.log(result['Obs']) - np.log(result['Pred']))
+        results.loc['rmse', name] = np.sqrt(np.sum(result['residual_sq']) / n)
+        # results.loc['mae', name] = np.sum(result['residual']) / n
+        # results.loc['rmsle', name] = np.exp(np.sqrt(np.sum(result['residual_lsq']) / n))
+        # result['residual_perc'] = abs((result['Obs'] - result['Pred'])) / result['Obs']
+        # results.loc['rsq_1wk', name] = np.square(result.corr().loc['Obs', '1wk'])
+        #results.loc['mape', name] = 100 * np.sum(result['residual_perc']) / n
 
         # CRL agreement
         if variable == 'chla_cyano':
             result['Obs_crl'] = result['Obs'].apply(parse_risk_level)
             result['Pred_crl'] = result['Pred'].apply(parse_risk_level)
             result['crl_agree'] = result['Obs_crl'] == result['Pred_crl']
-            stats_results.loc['crl', name] = 100 * round(np.sum(result['crl_agree']) / n, 3)
+            results.loc['crl', name] = 100 * round(np.sum(result['crl_agree']) / n, 3)
 
         # Trophic state agreement
         if variable == 'chla_med':
             result['Obs_ts'] = result['Obs'].apply(parse_trophic_state)
             result['Pred_ts'] = result['Pred'].apply(parse_trophic_state)
             result['ts_agree'] = result['Obs_ts'] == result['Pred_ts']
-            stats_results.loc['ts', name] = 100 * round(np.sum(result['ts_agree']) / n, 3)
+            results.loc['ts', name] = 100 * round(np.sum(result['ts_agree']) / n, 3)
 
         if horizon == 'all':
             # n = n - 1 week
             result['residual_2wk'] = abs(result['Obs'] - result['2wk'])
             result['residual_sq_2wk'] = np.square(result['Obs'] - result['2wk'])
-            stats_results.loc['rmse_2wk', name] = np.sqrt(np.sum(result['residual_sq_2wk']) / (n - 1))
+            results.loc['rmse_2wk', name] = np.sqrt(np.sum(result['residual_sq_2wk']) / (n - 1))
             # n = n - 3 weeks
             result['residual_4wk'] = abs(result['Obs'] - result['4wk'])
             result['residual_sq_4wk'] = np.square(result['Obs'] - result['4wk'])
-            stats_results.loc['rmse_4wk', name] = np.sqrt(np.sum(result['residual_sq_4wk']) / (n - 3))
+            results.loc['rmse_4wk', name] = np.sqrt(np.sum(result['residual_sq_4wk']) / (n - 3))
             result['2wk_crl'] = result['2wk'].apply(parse_risk_level)
             result['4wk_crl'] = result['4wk'].apply(parse_risk_level)
             result['2wk_crl_agree'] = result['Obs_crl'] == result['2wk_crl']
-            stats_results.loc['crl_2wk', name] = 100 * round(np.sum(result['2wk_crl_agree']) / (n - 1), 3)
+            results.loc['crl_2wk', name] = 100 * round(np.sum(result['2wk_crl_agree']) / (n - 1), 3)
             result['4wk_crl_agree'] = result['Obs_crl'] == result['4wk_crl']
-            stats_results.loc['crl_4wk', name] = 100 * round(np.sum(result['4wk_crl_agree']) / (n - 3), 3)
+            results.loc['crl_4wk', name] = 100 * round(np.sum(result['4wk_crl_agree']) / (n - 3), 3)
 
         # Charts
         if plot:
             # Time series
-            plt.figure()
-            result['Obs'].plot(style='k.-', label="Obs.")
-            result['Pred'].plot(style='b-', label="1wk")
-            if horizon == 'all':
-                result['2wk'].plot(style='g-', label="2wk")
-                result['4wk'].plot(style='y-', label="4wk")
-            result['residual'].plot(style='r+', label="residual")
-            plt.legend()
-            plt.ylabel('Chl-a (ug/L)')
-            plt.title('%s %s %s' % (name, variable, model))
+            # plt.figure()
+            # result['Obs'].plot(style='k.-', label="Obs.")
+            # result['Pred'].plot(style='b-', label="1wk")
+            # if horizon == 'all':
+            #     result['2wk'].plot(style='g-', label="2wk")
+            #     result['4wk'].plot(style='y-', label="4wk")
+            # result['residual'].plot(style='r+', label="residual")
+            # plt.legend()
+            # plt.ylabel('Chl-a (ug/L)')
+            # plt.title('%s %s %s' % (name, variable, model))
 
             # Scatter
             # plt.figure()
@@ -396,48 +485,53 @@ def forecast(variable='chla_cyano',
             # plt.xlabel('Obs. chl-a (ug/L)')
 
             # Seasonal decomposition
-            # plt.figure()
+            plt.figure()
             # change.plot()
             # ad.plot()
             # data['chla_cyano'].plot()
             # ma['chla_cyano'].plot()
             # cma['chla_cyano'].plot()
             # sa['chla_cyano'].plot()
+            # ma.plot()
+            # trend.plot()
+            # seasonal_series.plot()
+            # remainder.plot()
+            decomposed.plot()
+
 
             plt.show()
 
+
     # result = seasonal_decompose(ma['chla_cyano'], model="add")
     # result.plot()
-    #print('Variable: %s Agg: %s Model: %s Horizon: %s' % (variable, agg, model, horizon))
-    #print(stats_results)
-    return stats_results, names
-    # stats_results.to_excel("/home/mark/PycharmProjects/Forecasting/stats_results.xlsx")
+    print(results)
+    stats.to_excel("/home/mark/Documents/Forecasting/stats.xlsx")
+    return results, names
+    # results.to_excel("/home/mark/PycharmProjects/Forecasting/results.xlsx")
 
 
 if __name__ == "__main__":
-
-    # models:  naive, moving average, seasonal naive, exponential smoothing, ets
-    # aggregation: weekly (W) or monthly (M)
-    # forecast horizon: 1 or all( 1, 2, and 4)
-    # plot (create plots)
-
-    n, names = forecast(variable='chla_cyano', agg='W', model='naive', horizon=1, plot=False)
-    ma, names = forecast(variable='chla_cyano', agg='W', model='moving average', horizon=1, plot=False)
-    sn, names = forecast(variable='chla_cyano', agg='W', model='seasonal naive', horizon=1, plot=False)
-    es, names = forecast(variable='chla_cyano', agg='W', model='exponential smoothing', horizon=1, plot=True)
-    taes, names = forecast(variable='chla_cyano', agg='W', model='trend adjusted exponential smoothing', horizon=1, plot=True)
-    ets, names = forecast(variable='chla_cyano', agg='W', model='ets', horizon=1, plot=False)
-    #forecast(variable='chla_med', agg='W', model='naive', horizon=1, plot=False)
+    # n, names = forecast(variable='chla_cyano', model='naive', horizon=1, plot=False)
+    # ma, names = forecast(variable='chla_med', model='moving average', horizon=1, plot=False)
+    # sn, names = forecast(variable='chla_med', model='seasonal naive', horizon=1, plot=False)
+    # es, names = forecast(variable='chla_med', model='exponential smoothing', horizon=1, plot=False)
+    # taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
+    # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
+    lgdcpstn, names = forecast(variable='chla_cyano', model='logical decomposition', horizon=1, plot=True)
+    #forecast(variable='chla_med', model='naive', horizon=1, plot=False)
 
     # Can combine results here
-    index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
-    df = pd.DataFrame(columns=names, index=index)
-    df.loc['na', :] = n.loc['rmse', :]
-    df.loc['ma', :] = ma.loc['rmse', :]
-    df.loc['sn', :] = sn.loc['rmse', :]
-    df.loc['es', :] = es.loc['rmse', :]
-    df.loc['taes', :] = taes.loc['rmse', :]
-    df.loc['ets', :] = ets.loc['rmse', :]
+    # index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
+    # df = pd.DataFrame(columns=names, index=index)
+    # df.loc['na', :] = n.loc['rmse', :]
+    # df.loc['ma', :] = ma.loc['rmse', :]
+    # df.loc['sn', :] = sn.loc['rmse', :]
+    # df.loc['es', :] = es.loc['rmse', :]
+    # df.loc['taes', :] = taes.loc['rmse', :]
+    # df.loc['ets', :] = ets.loc['rmse', :]
 
-    print(df)
+    # df.to_excel("/home/mark/PycharmProjects/forecasting/chl_results.xlsx")
+
+    # print(df)
+    # print(es)
 
