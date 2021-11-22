@@ -5,6 +5,46 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt
 
 
+def plot_timeseries(result, horizon, name, variable, model):
+    # Time series
+    plt.figure()
+    result['Obs'].plot(style='k.-', label="Obs.")
+    result['Pred'].plot(style='b-', label="1wk")
+    if horizon == 'all':
+        result['2wk'].plot(style='g-', label="2wk")
+        result['4wk'].plot(style='y-', label="4wk")
+    result['residual'].plot(style='r+', label="residual")
+    plt.legend()
+    plt.ylabel('Chl-a (ug/L)')
+    plt.title('%s %s %s' % (name, variable, model))
+
+
+def plot_scatter(result, horizon, name):
+    plt.figure()
+    ax1 = result.plot.scatter('Obs', 'Pred', c='b', label='1wk')
+    if horizon == 'all':
+        result.plot.scatter('Obs', '2wk', c='g', ax=ax1, label='2wk')  # this needs to be shifted
+        result.plot.scatter('Obs', '4wk', c='y', ax=ax1, label='4wk')  # this needs to be shifted
+    plt.title(name)
+    plt.ylabel('Pred. chl-a (ug/L)')
+    plt.xlabel('Obs. chl-a (ug/L)')
+
+
+def plot_decomposition(decomposed):
+    plt.figure()
+    # change.plot()
+    # ad.plot()
+    # data['chla_cyano'].plot()
+    # ma['chla_cyano'].plot()
+    # cma['chla_cyano'].plot()
+    # sa['chla_cyano'].plot()
+    # ma.plot()
+    # trend.plot()
+    # seasonal_series.plot()
+    # remainder.plot()
+    decomposed.plot()
+
+
 def trend(y0, y1):
     """
     Calculate linear trend from two weeks values
@@ -78,6 +118,22 @@ def get_seasonal_average(sa, dt, variable):
 
     # Get seasonal average for forecast week
     return sa.loc[wk, variable]
+
+
+def simple_adjusted_seasonal(c, sc, sn):
+    """
+    Simple error adjusted seasonal model
+    :param c: current value or moving average
+    :param sc: seasonal average (current)
+    :param sn: seasonal average (next)
+    :return: forecast value
+    """
+    a = 0.7  # alpha weighting factor
+    anom = c - sc  # seasonal anomaly (difference between current and seasonal average)
+    f = (a * c) + (1 - a) * (sn + anom)
+    if f < 0:
+        return 0
+    return f
 
 
 def ets(c, p, t, s):
@@ -227,7 +283,7 @@ def forecast(variable='chla_cyano',
     print('Variable: %s Model: %s Horizon: %s' % (variable, model, horizon))
 
     # 1. Read in file
-    file_path = "/home/mark/PycharmProjects/forecasting/CyanoLakes_chl_stats.csv"
+    file_path = "/Users/Mark/Dropbox/Forecasting/CyanoLakes_chl_stats.csv"
     csv = pd.read_csv(file_path)
 
     df = csv[[variable, 'name']]  # subset
@@ -257,6 +313,16 @@ def forecast(variable='chla_cyano',
         # Centralized moving average
         cma = ma.rolling(window=2).mean()
 
+        # 1. Simple seasonal average calculations
+        # Subtract seasonal signal from resampled time-series (to get anomalies)
+        sa = cma.groupby(cma.index.isocalendar().week).mean()
+        subtract_array = ma.apply(lambda x: sa.loc[x.index.isocalendar().week, variable])
+        subtract_array.index = ma.index
+        anomalies = ma - subtract_array
+        change = anomalies - anomalies.shift(2)  # Calculate change (differential) as the trend + error
+        ad = anomalies.diff()  # equivalent to above
+
+        # 2. Classical ETS decomposition
         # Calculate trend equal to periodicity (12 months) moving average
         trend = ma.rolling(window=52).mean()  # 52 weeks in a year
 
@@ -276,30 +342,18 @@ def forecast(variable='chla_cyano',
         reconstruct = remainder + trend + seasonal_series
         columns = ['reconstructed', 'trend', 'seasonality', 'remainder']
         decomposed = pd.DataFrame(columns=columns, index=ma.index)
-        decomposed.loc[:, 'original'] = ma.loc[:, 'chla_cyano']
-        decomposed.loc[:, 'reconstructed'] = reconstruct.loc[:, 'chla_cyano']
-        decomposed.loc[:, 'trend'] = trend.loc[:, 'chla_cyano']
-        decomposed.loc[:, 'seasonality'] = seasonal_series.loc[:, 'chla_cyano']
-        decomposed.loc[:, 'remainder'] = remainder.loc[:, 'chla_cyano']
+        decomposed.loc[:, 'original'] = ma.loc[:, variable]
+        decomposed.loc[:, 'reconstructed'] = reconstruct.loc[:, variable]
+        decomposed.loc[:, 'trend'] = trend.loc[:, variable]
+        decomposed.loc[:, 'seasonality'] = seasonal_series.loc[:, variable]
+        decomposed.loc[:, 'remainder'] = remainder.loc[:, variable]
 
-
-        # Calculate seasonal weekly averages from cma
-        sa = cma.groupby(cma.index.isocalendar().week).mean()
 
         if variable == 'chla_cyano':
             cycma = cma.where(cma < 1, 1)  # where > 0 make 1 else 0
             cyct = cycma.groupby(cycma.index.isocalendar().week).count()  # weekly count
             cysum = cycma.groupby(cycma.index.isocalendar().week).sum()  # weekly sum
             cyprob = cysum / cyct
-
-        # Subtract seasonal signal from resampled time-series (to get anomalies)
-        subtract_array = ma.apply(lambda x: sa.loc[x.index.isocalendar().week, variable])
-        subtract_array.index = ma.index
-        anomalies = ma - subtract_array
-
-        # Calculate change (differential) as the trend + error
-        change = anomalies - anomalies.shift(2)
-        ad = anomalies.diff()  # equivalent to above
 
         # pre-assign lists (speed)
         y = list()  # actual chl
@@ -325,6 +379,7 @@ def forecast(variable='chla_cyano',
                 continue
 
             # Get seasonal average for forecast week
+            s0 = get_seasonal_average(sa, dt1, variable)  # current value
             s1 = get_seasonal_average(sa, dt2, variable)  # 1 wk forecast
             s2 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=1), variable)  # 2 wk forecast
             s4 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=3), variable)  # 4 wk forecast
@@ -392,6 +447,12 @@ def forecast(variable='chla_cyano',
                 else:
                     f0 = y_f1[i-1]
                 f1 = logical_decomposition(y0, y1, cp1, s1, t, f0)
+
+            if model == "simple empirical":
+                mva = (y0 + y1) / 2  # moving average
+                f1 = simple_adjusted_seasonal(mva, s0, s1)
+                # f1 = simple_adjusted_seasonal(y1, s0, s1)
+
 
             dates.append(dt2)  # 1 wk forecast dates
             y.append(y2)  # Chl-a observed (actual value at forecast date)
@@ -462,52 +523,18 @@ def forecast(variable='chla_cyano',
 
         # Charts
         if plot:
-            # Time series
-            # plt.figure()
-            # result['Obs'].plot(style='k.-', label="Obs.")
-            # result['Pred'].plot(style='b-', label="1wk")
-            # if horizon == 'all':
-            #     result['2wk'].plot(style='g-', label="2wk")
-            #     result['4wk'].plot(style='y-', label="4wk")
-            # result['residual'].plot(style='r+', label="residual")
-            # plt.legend()
-            # plt.ylabel('Chl-a (ug/L)')
-            # plt.title('%s %s %s' % (name, variable, model))
-
-            # Scatter
-            # plt.figure()
-            # ax1 = result.plot.scatter('Obs', '1wk', c='b', label='1wk')
-            # if horizon == 'all':
-            #     result.plot.scatter('Obs', '2wk', c='g', ax=ax1, label='2wk')  # this needs to be shifted
-            #     result.plot.scatter('Obs', '4wk', c='y', ax=ax1, label='4wk')  # this needs to be shifted
-            # plt.title(name)
-            # plt.ylabel('Pred. chl-a (ug/L)')
-            # plt.xlabel('Obs. chl-a (ug/L)')
-
-            # Seasonal decomposition
-            plt.figure()
-            # change.plot()
-            # ad.plot()
-            # data['chla_cyano'].plot()
-            # ma['chla_cyano'].plot()
-            # cma['chla_cyano'].plot()
-            # sa['chla_cyano'].plot()
-            # ma.plot()
-            # trend.plot()
-            # seasonal_series.plot()
-            # remainder.plot()
-            decomposed.plot()
-
+            # plot_timeseries(result, horizon, name, variable, model)
+            plot_scatter(result, horizon, name)
+            # plot_decomposition(decomposed)
 
             plt.show()
 
 
-    # result = seasonal_decompose(ma['chla_cyano'], model="add")
-    # result.plot()
     print(results)
-    stats.to_excel("/home/mark/Documents/Forecasting/stats.xlsx")
+    print('Mean rmse: %s' % str(results.loc['rmse',:].mean()))
+    #stats.to_excel("/Users/Mark/Dropbox/Forecasting/stats.xlsx")
+    results.to_excel("/Users/Mark/Dropbox/Forecasting/results.xlsx")
     return results, names
-    # results.to_excel("/home/mark/PycharmProjects/Forecasting/results.xlsx")
 
 
 if __name__ == "__main__":
@@ -517,8 +544,9 @@ if __name__ == "__main__":
     # es, names = forecast(variable='chla_med', model='exponential smoothing', horizon=1, plot=False)
     # taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
     # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
-    lgdcpstn, names = forecast(variable='chla_cyano', model='logical decomposition', horizon=1, plot=True)
+    lgdcpstn, names = forecast(variable='chla_med', model='simple empirical', horizon=1, plot=False)
     #forecast(variable='chla_med', model='naive', horizon=1, plot=False)
+    print('')
 
     # Can combine results here
     # index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
