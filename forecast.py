@@ -548,7 +548,7 @@ if __name__ == "__main__":
     # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
     maesa, names = forecast(variable='chla_cyano', model='masea', horizon='all', plot=False)
     #forecast(variable='chla_med', model='naive', horizon=1, plot=False)
-    print('')
+    # print('')
 
     # Can combine results here
     # index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
