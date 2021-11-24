@@ -3,20 +3,17 @@ import numpy as np
 import datetime
 from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 
-def plot_timeseries(result, horizon, name, variable, model):
+def plot_timeseries(ax, result, horizon, name, variable, model):
     # Time series
-    plt.figure()
-    result['Obs'].plot(style='k.-', label="Obs.")
-    result['Pred'].plot(style='b-', label="1wk")
+    ax.plot(result.index, result['Obs'], 'k-', linewidth=1, markersize=3, label="Obs.")
+    ax.plot(result.index, result['Pred'], 'b-', linewidth=0.9, label="1wk")
     if horizon == 'all':
-        result['2wk'].plot(style='g-', label="2wk")
-        result['4wk'].plot(style='y-', label="4wk")
-    result['residual'].plot(style='r+', label="residual")
-    plt.legend()
-    plt.ylabel('Chl-a (ug/L)')
-    plt.title('%s %s %s' % (name, variable, model))
+        ax.plot(result.index, result['2wk'], 'g-', linewidth=0.9, label="2wk")
+        ax.plot(result.index, result['4wk'], 'y-', linewidth=0.9, label="4wk")
+    ax.set_title('%s' % (name), loc='center', y=0.85, x=0.5)
 
 
 def plot_scatter(result, horizon, name):
@@ -288,6 +285,18 @@ def forecast(variable='chla_cyano',
     """
     print('Variable: %s Model: %s Horizon: %s' % (variable, model, horizon))
 
+    SMALL_SIZE = 6
+    MEDIUM_SIZE = 8
+    BIGGER_SIZE = 10
+
+    plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
+    plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+    plt.rc('axes', labelsize=SMALL_SIZE)    # fontsize of the x and y labels
+    plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+    plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+    plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+    plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
     # 1. Read in file
     file_path = "/Users/Mark/Dropbox/Forecasting/CyanoLakes_chl_stats.csv"
     csv = pd.read_csv(file_path)
@@ -304,7 +313,11 @@ def forecast(variable='chla_cyano',
     results = pd.DataFrame(columns=names)
     stats = pd.DataFrame(columns=names)
 
-    for name in names:
+    # Set up subplots
+    fig, axs = plt.subplots(3, 5, dpi=300, facecolor='w', constrained_layout=True,
+                            sharex=True)
+
+    for name, ax in zip(names, axs.flat):
         data = df[df['name'] == name]
 
         # Get some generic stats
@@ -513,19 +526,55 @@ def forecast(variable='chla_cyano',
             result['residual_4wk'] = abs(result['Obs'] - result['4wk'])
             result['residual_sq_4wk'] = np.square(result['Obs'] - result['4wk'])
             results.loc['rmse_4wk', name] = np.sqrt(np.sum(result['residual_sq_4wk']) / (n - 3))
-            result['2wk_crl'] = result['2wk'].apply(parse_risk_level)
-            result['4wk_crl'] = result['4wk'].apply(parse_risk_level)
-            result['2wk_crl_agree'] = result['Obs_crl'] == result['2wk_crl']
-            results.loc['crl_2wk', name] = 100 * round(np.sum(result['2wk_crl_agree']) / (n - 1), 3)
-            result['4wk_crl_agree'] = result['Obs_crl'] == result['4wk_crl']
-            results.loc['crl_4wk', name] = 100 * round(np.sum(result['4wk_crl_agree']) / (n - 3), 3)
+            
+            if variable == 'chla_cyano':
+                result['2wk_crl'] = result['2wk'].apply(parse_risk_level)
+                result['4wk_crl'] = result['4wk'].apply(parse_risk_level)
+                result['2wk_crl_agree'] = result['Obs_crl'] == result['2wk_crl']
+                results.loc['crl_2wk', name] = 100 * round(np.sum(result['2wk_crl_agree']) / (n - 1), 3)
+                result['4wk_crl_agree'] = result['Obs_crl'] == result['4wk_crl']
+                results.loc['crl_4wk', name] = 100 * round(np.sum(result['4wk_crl_agree']) / (n - 3), 3)
+            
+            if variable == 'chla_med':
+                result['2wk_ts'] = result['2wk'].apply(parse_trophic_state)
+                result['4wk_ts'] = result['4wk'].apply(parse_trophic_state)
+                result['2wk_ts_agree'] = result['Obs_ts'] == result['2wk_ts']
+                results.loc['ts_2wk', name] = 100 * round(np.sum(result['2wk_ts_agree']) / (n - 1), 3)
+                result['4wk_ts_agree'] = result['Obs_ts'] == result['4wk_ts']
+                results.loc['ts_4wk', name] = 100 * round(np.sum(result['4wk_ts_agree']) / (n - 3), 3)
+
 
         # Charts
         if plot:
-            plot_timeseries(result, horizon, name, variable, model)
+            plot_timeseries(ax, result, horizon, name, variable, model)
             # plot_scatter(result, horizon, name)
             # plot_decomposition(decomposed)
-            plt.show()
+
+    if plot:
+        ylabel_index = [0, 5, 10]
+        xlabel_index = [10, 11, 12, 13, 14]
+        if variable == 'chl_cyano':
+            legend_index = [1,]
+        else:
+            legend_index = [0,]
+        for i, ax in enumerate(axs.flat):
+            if i in ylabel_index:
+                ax.set(ylabel='Chl-a (ug/L)')
+            if i in xlabel_index:
+                ax.set(xlabel='Month (2021)')
+            if i in legend_index:
+                if variable == 'chl_cyano':
+                    ax.legend(loc='right')
+                else:
+                    ax.legend(loc='center left')
+            ax.xaxis.set_major_formatter(
+                mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
+            # Text in the x axis will be displayed in 'YYYY-mm' format.
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m'))
+
+        plt.show()
+        # Save to a file here
+        plt.savefig('/Users/Mark/DropBox/Forecasting/timeseries_' + variable +'.png')
 
 
     #print(results)
@@ -540,13 +589,14 @@ def forecast(variable='chla_cyano',
 
 
 if __name__ == "__main__":
+    variable = 'chla_med'
     # n, names = forecast(variable='chla_cyano', model='naive', horizon=1, plot=False)
     # ma, names = forecast(variable='chla_med', model='moving average', horizon=1, plot=False)
     # sn, names = forecast(variable='chla_med', model='seasonal naive', horizon=1, plot=False)
     # es, names = forecast(variable='chla_med', model='exponential smoothing', horizon=1, plot=False)
     # taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
     # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
-    maesa, names = forecast(variable='chla_cyano', model='masea', horizon='all', plot=False)
+    maesa, names = forecast(variable=variable, model='masea', horizon='all', plot=True)
     #forecast(variable='chla_med', model='naive', horizon=1, plot=False)
     # print('')
 
@@ -560,7 +610,7 @@ if __name__ == "__main__":
     # df.loc['taes', :] = taes.loc['rmse', :]
     # df.loc['ets', :] = ets.loc['rmse', :]
 
-    # df.to_excel("/home/mark/PycharmProjects/forecasting/chl_results.xlsx")
+    maesa.to_excel("/Users/Mark/Dropbox/Forecasting/maesa" + variable + ".xlsx")
 
     # print(df)
     # print(es)
