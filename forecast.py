@@ -314,8 +314,7 @@ def forecast(variable='chla_cyano',
     stats = pd.DataFrame(columns=names)
 
     # Set up subplots
-    fig, axs = plt.subplots(3, 5, dpi=300, facecolor='w', constrained_layout=True,
-                            sharex=True)
+    fig, axs = plt.subplots(3, 5, constrained_layout=True, sharex=True)
 
     for name, ax in zip(names, axs.flat):
         data = df[df['name'] == name]
@@ -553,7 +552,7 @@ def forecast(variable='chla_cyano',
     if plot:
         ylabel_index = [0, 5, 10]
         xlabel_index = [10, 11, 12, 13, 14]
-        if variable == 'chl_cyano':
+        if variable == 'chla_cyano':
             legend_index = [1,]
         else:
             legend_index = [0,]
@@ -563,7 +562,7 @@ def forecast(variable='chla_cyano',
             if i in xlabel_index:
                 ax.set(xlabel='Month (2021)')
             if i in legend_index:
-                if variable == 'chl_cyano':
+                if variable == 'chla_cyano':
                     ax.legend(loc='right')
                 else:
                     ax.legend(loc='center left')
@@ -572,9 +571,12 @@ def forecast(variable='chla_cyano',
             # Text in the x axis will be displayed in 'YYYY-mm' format.
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%m'))
 
-        plt.show()
         # Save to a file here
-        plt.savefig('/Users/Mark/DropBox/Forecasting/timeseries_' + variable +'.png')
+        plt.savefig('/Users/Mark/DropBox/Forecasting/timeseries_' + variable +'.eps',
+                    dpi=300, facecolor='w')
+
+        # Show after save
+        # plt.show()
 
 
     #print(results)
@@ -589,7 +591,7 @@ def forecast(variable='chla_cyano',
 
 
 if __name__ == "__main__":
-    variable = 'chla_med'
+    variable = 'chla_cyano'
     # n, names = forecast(variable='chla_cyano', model='naive', horizon=1, plot=False)
     # ma, names = forecast(variable='chla_med', model='moving average', horizon=1, plot=False)
     # sn, names = forecast(variable='chla_med', model='seasonal naive', horizon=1, plot=False)
