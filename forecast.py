@@ -5,271 +5,9 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-
-def plot_timeseries(ax, result, horizon, name, variable, model):
-    # Time series
-    ax.plot(result.index, result['Obs'], 'k-', linewidth=1, markersize=3, label="Obs.")
-    ax.plot(result.index, result['Pred'], 'b-', linewidth=0.9, label="1wk")
-    if horizon == 'all':
-        ax.plot(result.index, result['2wk'], 'g-', linewidth=0.9, label="2wk")
-        ax.plot(result.index, result['4wk'], 'y-', linewidth=0.9, label="4wk")
-    ax.set_title('%s' % (name), loc='center', y=0.85, x=0.5)
-
-
-def plot_scatter(result, horizon, name):
-    plt.figure()
-    ax1 = result.plot.scatter('Obs', 'Pred', c='b', label='1wk')
-    if horizon == 'all':
-        result.plot.scatter('Obs', '2wk', c='g', ax=ax1, label='2wk')  # this needs to be shifted
-        result.plot.scatter('Obs', '4wk', c='y', ax=ax1, label='4wk')  # this needs to be shifted
-    plt.title(name)
-    plt.ylabel('Pred. chl-a (ug/L)')
-    plt.xlabel('Obs. chl-a (ug/L)')
-
-
-def plot_decomposition(decomposed):
-    plt.figure()
-    # change.plot()
-    # ad.plot()
-    # data['chla_cyano'].plot()
-    # ma['chla_cyano'].plot()
-    # cma['chla_cyano'].plot()
-    # sa['chla_cyano'].plot()
-    # ma.plot()
-    # trend.plot()
-    # seasonal_series.plot()
-    # remainder.plot()
-    decomposed.plot()
-
-
-def trend(y0, y1):
-    """
-    Calculate linear trend from two weeks values
-    """
-    m = (y1 - y0) / 1  # dx = 1 week (weekly trend)
-    return m
-
-
-def exponential_smoothing(c, p):
-    """
-    Exponential smoothing function
-    :param c - actual value
-    :param p - predicted value
-    :returns f - forecast value
-    """
-    a = 0.7  # alpha ranges from 0 to 1
-    return (a * c) + (1 - a) * p
-
-
-def trend_adjusted_exponential_smoothing(c, p, t):
-    """
-    Exponential smoothing function
-    :param c - current actual value for t
-    :param p - predicted forecast value for t
-    :param t - previous trend
-    :returns f - forecast value
-    """
-    A = 0.5  # alpha ranges from 0 to 1
-    B = 0.5  # beta  ranges from 0 to 1 (trend adjustment factor)
-
-    # Exp smoothing
-    f = (A * c) + (1 - A) * p
-
-    # Trend (forecast trend)
-    ft = B * (f - p) + (1 - B) * t
-
-    # Trend adjusted forecast
-    taf = f + ft
-    if taf < 0:
-        taf = 0
-
-    return taf, ft
-
-
-def exponential_smoothing_err(c, p):
-    """
-    Exponential smoothing function
-    :param c - actual value
-    :param p - predicted value
-    :returns f - forecast value
-    """
-    a = 0.4  # alpha can be any value (typically between 0 and 1)
-    e = c - p  # residual error
-    f = c + (a * e)
-
-    # constrain to positive values
-    if f < 1:
-        return 1
-    return f
-
-
-def get_seasonal_average(sa, dt, variable):
-    """
-    Return iso week from current index for next week
-    """
-    wk = dt.isocalendar()[1]  # forecast week
-    if wk == 54:
-        wk = 1
-    if wk == 55:
-        wk = 2
-
-    # Get seasonal average for forecast week
-    return sa.loc[wk, variable]
-
-
-def moving_average_seasonal_error_adjusted(ma, sc, sn, horizon=1):
-    """
-    Simple error adjusted seasonal model
-    :param ma: moving average
-    :param sc: seasonal average (current)
-    :param sn: seasonal average (next)
-    :return: forecast value
-    """
-    # Weight seasonal component higher when forecasting ahead
-    if horizon == 4:
-        a = 0.3  # alpha weighting factor
-    elif horizon == 2:
-        a = 0.5
-    else:
-        a = 0.7
-    anom = ma - sc  # seasonal anomaly (difference between moving average and seasonal average)
-    f = (a * ma) + (1 - a) * (sn + anom)
-    if f < 0:
-        return 0
-    return f
-
-
-def ets(c, p, t, s):
-    """
-    Forecast model
-    :param - c current value
-    :param - p last predicted value
-    :param - t trend
-    :param - s seasonal value
-
-    0.5 weighting for seasonal value
-    0.5 weighting for current value times trend
-    """
-    w = 0.6
-
-
-    # 1. Forecast is weighting of seasonal and current inoculation
-    f = (w * c) + (1 - w) * s
-
-    # 2. Forecast is weighting of seasonal, current inoculation plus trend adjustment
-    # f = (w * (c + t)) + (1 - w) * s  # not very good
-    # f = (w * c) + ((1 - w) * s) + t  # trend too strong
-    # f = (w * c) + (1 - w) * (s + t)  # not great
-
-    # 3. Forecast is seasonal, current plus error of last forecast
-    e = c - p  # difference of previous forecast and actual value
-    #f = (w * (c + e)) + ((1 - w) * s)  # poor
-    #f = (w * c) + ((1 - w) * s) + e  # too jumpy
-
-    # 4.
-    # wc = 0.5  # current inoculation
-    # ws = 0.3  # season
-    # wt = 0.1  # trend
-    # we = 0.1  # error
-
-    # return (wc * c) + (ws * s) + (wt * t)
-
-    if f < 1:
-        f = 1
-
-    return f
-
-    # e = c - p   # error of previous prediction
-    # if c > 0:
-    #     ew = abs((c - p)) / c
-    #     if ew > 1:
-    #         wc = 0.1
-    #         we = 0.5
-    #         print("We >>")
-    #
-    # f = (wc * c) + (wt * t) + (ws * s) + (we * e)
-    # if f < 1:
-    #     f = 1
-    #
-    # return f
-    # Add exponential smoothing
-    #return exponential_smoothing(c, f)
-
-    # return (w * c) + (1 - w) * (s)
-    # return s
-
-
-def logical_decomposition(y1, y0, cp1, sa, t, f0):
-    """Custom model
-    y1 - current value
-    y0 - last week value
-    cp1 - seasonal cyanobacteria probability of forecast week
-    t - trend
-    f0 - forecast for this week (the last forecast)
-    """
-
-    # 1. Moving average
-    ma = (y1 + y0) / 2
-
-    # 2. Error of last forecast
-    e = y1 - f0
-
-    # 3. Weight MA by cyano probability
-    #f = (ma * cp1)  # + e
-    f = ma + e
-
-    # weighted current and seasonal average with error
-    a = 0.7
-    f = (a * y1) + (1 - a) * sa
-
-
-
-    if f < 1:
-        return 1
-
-    return f
-
-
-def ets2wk(c, t, s):
-    w = 0.5  # current inoculation weighting factor
-    return (w * c) + (1 - w) * s
-
-
-def ets4wk(c, t, s):
-    w = 0.3  # current inoculation
-    return (w * c) + (1 - w) * s
-
-
-def parse_risk_level(x):
-    """Returns risk level for chl value
-    :returns
-    0 = low
-    1 = med
-    2 = high
-    3 = very high
-    """
-    if np.isnan(x):
-        return np.nan
-    if x > 100:
-        return 3
-    if x > 50:
-        return 2
-    if x > 10:
-        return 1
-    return 0
-
-
-def parse_trophic_state(x):
-     if np.isnan(x):
-        return np.nan
-     if x > 50:
-         return 3  #Hyper
-     if x > 20:
-         return 2  #Eu
-     if x > 10:
-         return 1 #Meso
-     return 0 # Oligo
-
+from helper import *
+from charts import *
+from models import *
 
 def forecast(variable='chla_cyano',
              model='naive',
@@ -331,14 +69,17 @@ def forecast(variable='chla_cyano',
         # Centralized moving average
         cma = ma.rolling(window=2).mean()
 
+        # Restrict training data to 1 year from most recent index value
+        # cma = cma[cma.index < (cma.index[-1] - datetime.timedelta(365))]
+
         # 1. Simple seasonal average calculations
         # Subtract seasonal signal from resampled time-series (to get anomalies)
-        sa = cma.groupby(cma.index.isocalendar().week).mean()
-        subtract_array = ma.apply(lambda x: sa.loc[x.index.isocalendar().week, variable])
-        subtract_array.index = ma.index
-        anomalies = ma - subtract_array
-        change = anomalies - anomalies.shift(2)  # Calculate change (differential) as the trend + error
-        ad = anomalies.diff()  # equivalent to above
+        # sa = cma.groupby(cma.index.isocalendar().week).mean()
+        # subtract_array = ma.apply(lambda x: sa.loc[x.index.isocalendar().week, variable])
+        # subtract_array.index = ma.index
+        # anomalies = ma - subtract_array
+        # change = anomalies - anomalies.shift(2)  # Calculate change (differential) as the trend + error
+        # ad = anomalies.diff()  # equivalent to above
 
         # 2. Classical ETS decomposition
         # Calculate trend equal to periodicity (12 months) moving average
@@ -386,19 +127,13 @@ def forecast(variable='chla_cyano',
             except KeyError:
                 continue
 
-            # Get seasonal average for forecast week
-            s0 = get_seasonal_average(sa, dt1, variable)  # current value
-            s1 = get_seasonal_average(sa, dt2, variable)  # 1 wk forecast
-            s2 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=1), variable)  # 2 wk forecast
-            s4 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=3), variable)  # 4 wk forecast
-
             # Get seasonal probability
-            if variable == 'chla_cyano':
-                cp1 = get_seasonal_average(cyprob, dt2, variable)
+            # if variable == 'chla_cyano':
+            #     cp1 = get_seasonal_average(cyprob, dt2, variable)
 
             # Get trend
             # t = trend(y0, y1)
-            #t = change.loc[dt1].values[0]  # this weeks trend (from last weeks)
+            # t = change.loc[dt1].values[0]  # this weeks trend (from last weeks)
             t = y1 - y0  # change since last week
 
             # Compute forecasts
@@ -457,6 +192,14 @@ def forecast(variable='chla_cyano',
                 f1 = logical_decomposition(y0, y1, cp1, s1, t, f0)
 
             if model == "masea":
+                # Get seasonal average for forecast week
+                mcma = cma[cma.index <= dt1]  # include all data up to current value (no future data)
+                sa = mcma.groupby(mcma.index.isocalendar().week).mean()
+                s0 = get_seasonal_average(sa, dt1, variable)  # current value
+                s1 = get_seasonal_average(sa, dt2, variable)  # 1 wk forecast
+                s2 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=1), variable)  # 2 wk forecast
+                s4 = get_seasonal_average(sa, dt2 + datetime.timedelta(weeks=3), variable)  # 4 wk forecast
+
                 mva = (y0 + y1) / 2  # moving average
                 f1 = moving_average_seasonal_error_adjusted(mva, s0, s1)
 
@@ -572,8 +315,8 @@ def forecast(variable='chla_cyano',
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%m'))
 
         # Save to a file here
-        plt.savefig('/Users/Mark/DropBox/Forecasting/timeseries_' + variable +'.eps',
-                    dpi=300, facecolor='w')
+        # plt.savefig('/Users/Mark/DropBox/Forecasting/timeseries_' + variable +'.eps',
+        #             dpi=300, facecolor='w')
 
         # Show after save
         # plt.show()
@@ -586,17 +329,17 @@ def forecast(variable='chla_cyano',
         print('Mean rmse 4 wk: %s' % str(results.loc['rmse_4wk',:].mean()))
 
     #stats.to_excel("/Users/Mark/Dropbox/Forecasting/stats.xlsx")
-    results.to_excel("/Users/Mark/Dropbox/Forecasting/results.xlsx")
+    # results.to_excel("/Users/Mark/Dropbox/Forecasting/results.xlsx")
     return results, names
 
 
 if __name__ == "__main__":
-    variable = 'chla_cyano'
+    variable = 'chla_cyano'  # 'chla_med'
     # n, names = forecast(variable='chla_cyano', model='naive', horizon=1, plot=False)
     # ma, names = forecast(variable='chla_med', model='moving average', horizon=1, plot=False)
     # sn, names = forecast(variable='chla_med', model='seasonal naive', horizon=1, plot=False)
     # es, names = forecast(variable='chla_med', model='exponential smoothing', horizon=1, plot=False)
-    # taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
+    #taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
     # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
     maesa, names = forecast(variable=variable, model='masea', horizon='all', plot=True)
     #forecast(variable='chla_med', model='naive', horizon=1, plot=False)
@@ -612,7 +355,7 @@ if __name__ == "__main__":
     # df.loc['taes', :] = taes.loc['rmse', :]
     # df.loc['ets', :] = ets.loc['rmse', :]
 
-    maesa.to_excel("/Users/Mark/Dropbox/Forecasting/maesa" + variable + ".xlsx")
+    # maesa.to_excel("/Users/Mark/Dropbox/Forecasting/maesa" + variable + ".xlsx")
 
     # print(df)
     # print(es)
