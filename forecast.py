@@ -9,6 +9,9 @@ from helper import *
 from charts import *
 from models import *
 
+# Root directory
+root = "/Users/Mark/Dropbox/Forecasting/"
+
 def forecast(variable='chla_cyano',
              model='naive',
              horizon=1,
@@ -36,8 +39,11 @@ def forecast(variable='chla_cyano',
     plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
     # 1. Read in file
-    file_path = "/Users/Mark/Dropbox/Forecasting/CyanoLakes_chl_stats.csv"
+    file_path = root + "Data/CyanoLakes_chl_stats.csv"
     csv = pd.read_csv(file_path)
+
+    # Optionally plot all raw timeseries
+    # plot_raw_timeseries(csv)  # raw plot
 
     df = csv[[variable, 'name']]  # subset
     df.index = pd.to_datetime(csv['date'])  # make date index
@@ -289,8 +295,19 @@ def forecast(variable='chla_cyano',
         # Charts
         if plot:
             plot_timeseries(ax, result, horizon, name, variable, model)
+            plot_raw_timeseries(ax2, ma, name)
             # plot_scatter(result, horizon, name)
             # plot_decomposition(decomposed)
+
+    # Print results
+    print('Mean rmse: %s' % str(results.loc['rmse',:].mean()))
+    if horizon == 'all':
+        print('Mean rmse 2wk: %s' % str(results.loc['rmse_2wk',:].mean()))
+        print('Mean rmse 4 wk: %s' % str(results.loc['rmse_4wk',:].mean()))
+
+    # Save results to excel
+    stats.to_excel(root + "Results/timeseries_stats.xlsx")
+    results.to_excel(root + "Results/" + model + "_rmse_results.xlsx")
 
     if plot:
         ylabel_index = [0, 5, 10]
@@ -315,48 +332,38 @@ def forecast(variable='chla_cyano',
             ax.xaxis.set_major_formatter(mdates.DateFormatter('%m'))
 
         # Save to a file here
-        # plt.savefig('/Users/Mark/DropBox/Forecasting/timeseries_' + variable +'.eps',
-        #             dpi=300, facecolor='w')
+        plt.savefig(root + "Results/timeseries_" + variable + ".eps",
+                    dpi=300, facecolor='w')
 
         # Show after save
-        # plt.show()
+        plt.show()
 
-
-    #print(results)
-    print('Mean rmse: %s' % str(results.loc['rmse',:].mean()))
-    if horizon == 'all':
-        print('Mean rmse 2wk: %s' % str(results.loc['rmse_2wk',:].mean()))
-        print('Mean rmse 4 wk: %s' % str(results.loc['rmse_4wk',:].mean()))
-
-    #stats.to_excel("/Users/Mark/Dropbox/Forecasting/stats.xlsx")
-    # results.to_excel("/Users/Mark/Dropbox/Forecasting/results.xlsx")
     return results, names
 
 
 if __name__ == "__main__":
-    variable = 'chla_cyano'  # 'chla_med'
+    variable = 'chla_med'  # 'chla_med'
+    plot = True  # draw plots
+    combine = False  # combine all results
+    horizon = 'all'  # use 1, 2 or all
+    model = None  # model
     # n, names = forecast(variable='chla_cyano', model='naive', horizon=1, plot=False)
     # ma, names = forecast(variable='chla_med', model='moving average', horizon=1, plot=False)
     # sn, names = forecast(variable='chla_med', model='seasonal naive', horizon=1, plot=False)
     # es, names = forecast(variable='chla_med', model='exponential smoothing', horizon=1, plot=False)
     #taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
     # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
-    maesa, names = forecast(variable=variable, model='masea', horizon='all', plot=True)
-    #forecast(variable='chla_med', model='naive', horizon=1, plot=False)
-    # print('')
+    maesa, names = forecast(variable=variable, model='masea', horizon=horizon, plot=plot)
 
     # Can combine results here
-    # index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
-    # df = pd.DataFrame(columns=names, index=index)
-    # df.loc['na', :] = n.loc['rmse', :]
-    # df.loc['ma', :] = ma.loc['rmse', :]
-    # df.loc['sn', :] = sn.loc['rmse', :]
-    # df.loc['es', :] = es.loc['rmse', :]
-    # df.loc['taes', :] = taes.loc['rmse', :]
-    # df.loc['ets', :] = ets.loc['rmse', :]
+    if combine:
+        index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
+        df = pd.DataFrame(columns=names, index=index)
+        df.loc['na', :] = n.loc['rmse', :]
+        df.loc['ma', :] = ma.loc['rmse', :]
+        df.loc['sn', :] = sn.loc['rmse', :]
+        df.loc['es', :] = es.loc['rmse', :]
+        df.loc['taes', :] = taes.loc['rmse', :]
+        df.loc['ets', :] = ets.loc['rmse', :]
 
-    # maesa.to_excel("/Users/Mark/Dropbox/Forecasting/maesa" + variable + ".xlsx")
-
-    # print(df)
-    # print(es)
-
+    maesa.to_excel(root + "Results/maesa" + variable + ".xlsx")
