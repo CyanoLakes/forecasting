@@ -256,7 +256,12 @@ def forecast(variable='chla_cyano',
             result['Obs_crl'] = result['Obs'].apply(parse_risk_level)
             result['Pred_crl'] = result['Pred'].apply(parse_risk_level)
             result['crl_agree'] = result['Obs_crl'] == result['Pred_crl']
+            result['crl_high_agree'] =  np.logical_and(result['Obs_crl'] >= 2, result['Pred_crl'] >= 2)
+            n_high = np.sum((result['Obs_crl'] >= 2))
             results.loc['crl', name] = 100 * round(np.sum(result['crl_agree']) / n, 3)
+            if n_high >= 1:
+                results.loc['crl_high', name] = 100 * round(np.sum(result['crl_high_agree']) / n_high, 3)
+            results.loc['n_crl_high', name] = n_high
 
         # Trophic state agreement
         if variable == 'chla_med':
@@ -279,10 +284,15 @@ def forecast(variable='chla_cyano',
                 result['2wk_crl'] = result['2wk'].apply(parse_risk_level)
                 result['4wk_crl'] = result['4wk'].apply(parse_risk_level)
                 result['2wk_crl_agree'] = result['Obs_crl'] == result['2wk_crl']
+                result['2wk_crl_high_agree'] =  np.logical_and(result['Obs_crl'] >= 2, result['2wk_crl'] >= 2)
                 results.loc['crl_2wk', name] = 100 * round(np.sum(result['2wk_crl_agree']) / (n - 1), 3)
                 result['4wk_crl_agree'] = result['Obs_crl'] == result['4wk_crl']
+                result['4wk_crl_high_agree'] =  np.logical_and(result['Obs_crl'] >= 2, result['4wk_crl'] >= 2)
                 results.loc['crl_4wk', name] = 100 * round(np.sum(result['4wk_crl_agree']) / (n - 3), 3)
-            
+                if n_high >= 1:
+                    results.loc['crl_high_2wk', name] = 100 * round(np.sum(result['2wk_crl_high_agree']) / n_high, 3)
+                    results.loc['crl_high_4wk', name] = 100 * round(np.sum(result['4wk_crl_high_agree']) / n_high, 3)
+
             if variable == 'chla_med':
                 result['2wk_ts'] = result['2wk'].apply(parse_trophic_state)
                 result['4wk_ts'] = result['4wk'].apply(parse_trophic_state)
@@ -295,7 +305,6 @@ def forecast(variable='chla_cyano',
         # Charts
         if plot:
             plot_timeseries(ax, result, horizon, name, variable, model)
-            plot_raw_timeseries(ax2, ma, name)
             # plot_scatter(result, horizon, name)
             # plot_decomposition(decomposed)
 
@@ -342,7 +351,7 @@ def forecast(variable='chla_cyano',
 
 
 if __name__ == "__main__":
-    variable = 'chla_med'  # 'chla_med'
+    variable = 'chla_cyano'  # 'chla_med'
     plot = True  # draw plots
     combine = False  # combine all results
     horizon = 'all'  # use 1, 2 or all
