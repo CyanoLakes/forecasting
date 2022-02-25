@@ -5,12 +5,11 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
+import settings
 from helper import *
 from charts import *
 from models import *
 
-# Root directory
-root = "/Users/Mark/Dropbox/Forecasting/"
 
 def forecast(variable='chla_cyano',
              model='naive',
@@ -18,32 +17,24 @@ def forecast(variable='chla_cyano',
              plot=False):
     """
     Forecasting function.
-    :param model: model - name of the model
+    :param model: model - name of the model can be 'naive', 'moving average', 'seasonal naive',
+    'exponential smoothing', 'trend adjusted exponential smoothing', 'exponential smoothing err',
+    'ets', 'masea'
     :param plot: create plots (True or False)
-    :param horizon: forecast horizon (1, 2, 4 or all)
+    :param horizon: forecast horizon (1, 2, 4 or 'all')
     :param variable: chla_med or chla_cyano
     :return: returns results dataframe
     """
+
     print('Variable: %s Model: %s Horizon: %s' % (variable, model, horizon))
 
-    SMALL_SIZE = 6
-    MEDIUM_SIZE = 8
-    BIGGER_SIZE = 10
-
-    plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
-    plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
-    plt.rc('axes', labelsize=SMALL_SIZE)    # fontsize of the x and y labels
-    plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-    plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-    plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
-    plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
-
     # 1. Read in file
-    file_path = root + "Data/CyanoLakes_chl_stats.csv"
+    file_path = settings.ROOT + settings.INPUT_FILE
     csv = pd.read_csv(file_path)
 
     # Optionally plot all raw timeseries
-    # plot_raw_timeseries(csv)  # raw plot
+    if plot:
+        plot_raw_timeseries(csv)
 
     df = csv[[variable, 'name']]  # subset
     df.index = pd.to_datetime(csv['date'])  # make date index
@@ -74,18 +65,6 @@ def forecast(variable='chla_cyano',
 
         # Centralized moving average
         cma = ma.rolling(window=2).mean()
-
-        # Restrict training data to 1 year from most recent index value
-        # cma = cma[cma.index < (cma.index[-1] - datetime.timedelta(365))]
-
-        # 1. Simple seasonal average calculations
-        # Subtract seasonal signal from resampled time-series (to get anomalies)
-        # sa = cma.groupby(cma.index.isocalendar().week).mean()
-        # subtract_array = ma.apply(lambda x: sa.loc[x.index.isocalendar().week, variable])
-        # subtract_array.index = ma.index
-        # anomalies = ma - subtract_array
-        # change = anomalies - anomalies.shift(2)  # Calculate change (differential) as the trend + error
-        # ad = anomalies.diff()  # equivalent to above
 
         # 2. Classical ETS decomposition
         # Calculate trend equal to periodicity (12 months) moving average
@@ -133,13 +112,7 @@ def forecast(variable='chla_cyano',
             except KeyError:
                 continue
 
-            # Get seasonal probability
-            # if variable == 'chla_cyano':
-            #     cp1 = get_seasonal_average(cyprob, dt2, variable)
-
             # Get trend
-            # t = trend(y0, y1)
-            # t = change.loc[dt1].values[0]  # this weeks trend (from last weeks)
             t = y1 - y0  # change since last week
 
             # Compute forecasts
@@ -225,7 +198,6 @@ def forecast(variable='chla_cyano',
             i += 1
 
         # Append results
-        # when appending 2wk and 4wk forecast shift the index date... (otherwise it doesn't don't align)
         if horizon == 1:
             result = pd.DataFrame(list(zip(y, y_f1)), index=dates, columns=['Obs', 'Pred'])
 
@@ -237,12 +209,14 @@ def forecast(variable='chla_cyano',
             result_wk4 = pd.DataFrame(y_f4, index=dates4, columns=['4wk', ])
             result = pd.concat([result_wk1, result_wk2, result_wk4], axis=1)
 
-        # Calculate performance (we are only using rmse which uses arithmetic mean)
+        # Calculate RMSE performance metric
         n = len(dates)
         result['residual'] = abs(result['Obs'] - result['Pred'])
         result['residual_sq'] = np.square(result['Obs'] - result['Pred'])
-        # result['residual_lsq'] = np.square(np.log(result['Obs']) - np.log(result['Pred']))
         results.loc['rmse', name] = np.sqrt(np.sum(result['residual_sq']) / n)
+
+        # Alternative performance metrics
+        # result['residual_lsq'] = np.square(np.log(result['Obs']) - np.log(result['Pred']))
         # results.loc['mae', name] = np.sum(result['residual']) / n
         # results.loc['rmsle', name] = np.exp(np.sqrt(np.sum(result['residual_lsq']) / n))
         # result['residual_perc'] = abs((result['Obs'] - result['Pred'])) / result['Obs']
@@ -301,12 +275,11 @@ def forecast(variable='chla_cyano',
                 result['4wk_ts_agree'] = result['Obs_ts'] == result['4wk_ts']
                 results.loc['ts_4wk', name] = 100 * round(np.sum(result['4wk_ts_agree']) / (n - 3), 3)
 
-
         # Charts
         if plot:
             plot_timeseries(ax, result, horizon, name, variable, model)
-            # plot_scatter(result, horizon, name)
-            # plot_decomposition(decomposed)
+            plot_scatter(result, horizon, name)
+            plot_decomposition(name, decomposed)
 
     # Print results
     print('Mean rmse: %s' % str(results.loc['rmse',:].mean()))
@@ -315,64 +288,12 @@ def forecast(variable='chla_cyano',
         print('Mean rmse 4 wk: %s' % str(results.loc['rmse_4wk',:].mean()))
 
     # Save results to excel
-    stats.to_excel(root + "Results/timeseries_stats.xlsx")
-    results.to_excel(root + "Results/" + model + "_rmse_results.xlsx")
+    stats.to_excel(settings.ROOT + settings.OUTPUT_PATH + "timeseries_stats.xlsx")
+    results.to_excel(settings.ROOT + settings.OUTPUT_PATH + model + "_rmse_results.xlsx")
 
     if plot:
-        ylabel_index = [0, 5, 10]
-        xlabel_index = [10, 11, 12, 13, 14]
-        if variable == 'chla_cyano':
-            legend_index = [1,]
-        else:
-            legend_index = [0,]
-        for i, ax in enumerate(axs.flat):
-            if i in ylabel_index:
-                ax.set(ylabel='Chl-a (ug/L)')
-            if i in xlabel_index:
-                ax.set(xlabel='Month (2021)')
-            if i in legend_index:
-                if variable == 'chla_cyano':
-                    ax.legend(loc='right')
-                else:
-                    ax.legend(loc='center left')
-            ax.xaxis.set_major_formatter(
-                mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
-            # Text in the x axis will be displayed in 'YYYY-mm' format.
-            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m'))
+        format(variable, axs)
 
-        # Save to a file here
-        plt.savefig(root + "Results/timeseries_" + variable + ".eps",
-                    dpi=300, facecolor='w')
-
-        # Show after save
-        plt.show()
+    results.to_excel(settings.ROOT + settings.OUTPUT_PATH + variable + ".xlsx")
 
     return results, names
-
-
-if __name__ == "__main__":
-    variable = 'chla_cyano'  # 'chla_med'
-    plot = True  # draw plots
-    combine = False  # combine all results
-    horizon = 'all'  # use 1, 2 or all
-    model = None  # model
-    # n, names = forecast(variable='chla_cyano', model='naive', horizon=1, plot=False)
-    # ma, names = forecast(variable='chla_med', model='moving average', horizon=1, plot=False)
-    # sn, names = forecast(variable='chla_med', model='seasonal naive', horizon=1, plot=False)
-    # es, names = forecast(variable='chla_med', model='exponential smoothing', horizon=1, plot=False)
-    #taes, names = forecast(variable='chla_med', model='trend adjusted exponential smoothing', horizon=1, plot=False)
-    # ets, names = forecast(variable='chla_cyano', model='ets', horizon=1, plot=True)
-    maesa, names = forecast(variable=variable, model='masea', horizon=horizon, plot=plot)
-
-    # Can combine results here
-    if combine:
-        index = ['na', 'ma', 'sn', 'es', 'taes', 'ets']
-        df = pd.DataFrame(columns=names, index=index)
-        df.loc['na', :] = n.loc['rmse', :]
-        df.loc['ma', :] = ma.loc['rmse', :]
-        df.loc['sn', :] = sn.loc['rmse', :]
-        df.loc['es', :] = es.loc['rmse', :]
-        df.loc['taes', :] = taes.loc['rmse', :]
-        df.loc['ets', :] = ets.loc['rmse', :]
-
-    maesa.to_excel(root + "Results/maesa" + variable + ".xlsx")

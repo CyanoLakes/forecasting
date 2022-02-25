@@ -2,19 +2,20 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 
-root = "/Users/Mark/Dropbox/Forecasting/"
+import settings
 
 SMALL_SIZE = 6
 MEDIUM_SIZE = 8
 BIGGER_SIZE = 10
 
-plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
-plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
-plt.rc('axes', labelsize=SMALL_SIZE)    # fontsize of the x and y labels
-plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('font', size=SMALL_SIZE)  # controls default text sizes
+plt.rc('axes', titlesize=SMALL_SIZE)  # fontsize of the axes title
+plt.rc('axes', labelsize=SMALL_SIZE)  # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)  # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)  # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)  # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
 
 def plot_raw_timeseries(csv):
     df = csv[['chla_med', 'chla_cyano', 'name']]  # subset
@@ -30,7 +31,7 @@ def plot_raw_timeseries(csv):
 
     ylabel_index = [0, 5, 10]
     xlabel_index = [10, 11, 12, 13, 14]
-    legend_index = [0,]
+    legend_index = [0, ]
     for i, ax in enumerate(axs.flat):
         if i in ylabel_index:
             ax.set(ylabel='Chl-a (ug/L)')
@@ -44,9 +45,10 @@ def plot_raw_timeseries(csv):
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%y'))
 
     # Save to a file here
-    plt.savefig(root + "Results/raw_timeseries.eps",
+    plt.savefig(settings.ROOT + "Charts/raw_timeseries.eps",
                 dpi=300, facecolor='w')
-    plt.show()
+    fig.close()
+
 
 def plot_timeseries(ax, result, horizon, name, variable, model):
     # Time series
@@ -56,6 +58,7 @@ def plot_timeseries(ax, result, horizon, name, variable, model):
         ax.plot(result.index, result['2wk'], 'g-', linewidth=0.9, label="2wk")
         ax.plot(result.index, result['4wk'], 'y-', linewidth=0.9, label="4wk")
     ax.set_title('%s' % (name), loc='center', y=0.85, x=0.5)
+
 
 def plot_scatter(result, horizon, name):
     plt.figure()
@@ -67,16 +70,37 @@ def plot_scatter(result, horizon, name):
     plt.ylabel('Pred. chl-a (ug/L)')
     plt.xlabel('Obs. chl-a (ug/L)')
 
-def plot_decomposition(decomposed):
+
+def plot_decomposition(name, decomposed):
     plt.figure()
-    # change.plot()
-    # ad.plot()
-    # data['chla_cyano'].plot()
-    # ma['chla_cyano'].plot()
-    # cma['chla_cyano'].plot()
-    # sa['chla_cyano'].plot()
-    # ma.plot()
-    # trend.plot()
-    # seasonal_series.plot()
-    # remainder.plot()
+    plt.title(name)
     decomposed.plot()
+
+
+def format(variable, axs):
+    ylabel_index = [0, 5, 10]
+    xlabel_index = [10, 11, 12, 13, 14]
+    if variable == 'chla_cyano':
+        legend_index = [1, ]
+    else:
+        legend_index = [0, ]
+    for i, ax in enumerate(axs.flat):
+        if i in ylabel_index:
+            ax.set(ylabel='Chl-a (ug/L)')
+        if i in xlabel_index:
+            ax.set(xlabel='Month (2021)')
+        if i in legend_index:
+            if variable == 'chla_cyano':
+                ax.legend(loc='right')
+            else:
+                ax.legend(loc='center left')
+        ax.xaxis.set_major_formatter(
+            mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
+        # Text in the x axis will be displayed in 'YYYY-mm' format.
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m'))
+
+    # Save
+    plt.savefig(settings.ROOT + "Charts/" + variable + ".eps", dpi=300, facecolor='w')
+
+    # Show after save
+    plt.show()
